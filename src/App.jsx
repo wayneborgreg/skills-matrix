@@ -429,7 +429,7 @@ useEffect(() => {
       data: { agents, staff, records, monthly, modules, tasks,
                thresholds, shadowing, calEvents, passScore, auditLog },
       updated_at: new Date().toISOString()
-    }).eq('id','main')
+    }).eq('id','main').then()
   }, 1500)
   return () => clearTimeout(timer)
 }, [agents, staff, records, monthly, modules, tasks,
