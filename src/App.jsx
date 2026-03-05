@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 
+import { supabase } from './supabase'
+
 function GlobalStyles() {
   useEffect(() => {
     const s = document.createElement("style");
@@ -399,6 +401,39 @@ export default function SkillsMatrix() {
   const [calEventModal,setCalEventModal]= useState(null); // null | "add" | eventId
   const [calForm,      setCalForm]      = useState({});
   const [calDelId,     setCalDelId]     = useState(null);
+
+// ── SUPABASE LOAD ────────────────────────────────────────────────────────
+useEffect(() => {
+  supabase.from('app_state').select('data').eq('id','main').single()
+    .then(({ data: row }) => {
+      if (!row?.data || Object.keys(row.data).length === 0) return
+      const s = row.data
+      if (s.agents)     setAgents(s.agents)
+      if (s.staff)      setStaff(s.staff)
+      if (s.records)    setRecords(s.records)
+      if (s.monthly)    setMonthly(s.monthly)
+      if (s.modules)    setModules(s.modules)
+      if (s.tasks)      setTasks(s.tasks)
+      if (s.thresholds) setThresholds(s.thresholds)
+      if (s.shadowing)  setShadowing(s.shadowing)
+      if (s.calEvents)  setCalEvents(s.calEvents)
+      if (s.passScore)  setPassScore(s.passScore)
+      if (s.auditLog)   setAuditLog(s.auditLog)
+    })
+}, [])
+
+// ── SUPABASE SAVE ────────────────────────────────────────────────────────
+useEffect(() => {
+  const timer = setTimeout(() => {
+    supabase.from('app_state').update({
+      data: { agents, staff, records, monthly, modules, tasks,
+               thresholds, shadowing, calEvents, passScore, auditLog },
+      updated_at: new Date().toISOString()
+    }).eq('id','main')
+  }, 1500)
+  return () => clearTimeout(timer)
+}, [agents, staff, records, monthly, modules, tasks,
+    thresholds, shadowing, calEvents, passScore, auditLog])
 
   // ── UI helpers ────────────────────────────────────────────────────────
   const [showFormErr,    setShowFormErr]    = useState(false);
