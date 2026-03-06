@@ -2578,14 +2578,12 @@ export default function App() {
   const [authReady,     setAuthReady]     = useState(false);
 
   const loadWorkspaceUser = useCallback(async (userId) => {
-    const { data: sa } = await supabase.from("super_admins").select("*").eq("user_id", userId).maybeSingle();
-    if (sa) {
-      const { data: ws } = await supabase.from("workspaces").select("id").limit(1).single();
-      setWorkspaceUser({ role:"super_admin", workspace_id:ws?.id });
-      return;
-    }
+    // Always get workspace from workspace_users
     const { data: wu } = await supabase.from("workspace_users").select("*").eq("user_id", userId).maybeSingle();
-    if (wu) setWorkspaceUser(wu);
+    if (!wu) return;
+    // Check if they're also a super_admin — if so, elevate the role
+    const { data: sa } = await supabase.from("super_admins").select("id").eq("user_id", userId).maybeSingle();
+    setWorkspaceUser({ ...wu, role: sa ? "super_admin" : wu.role });
   }, []);
 
   useEffect(() => {
