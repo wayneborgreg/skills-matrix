@@ -1,6 +1,53 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-import { supabase } from './supabase'
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
+
+// ── PERMISSION DEFAULTS ─────────────────────────────────────────────────
+// These are the out-of-the-box defaults for each role.
+// Each workspace can override these via the Permissions tab in Settings.
+// super_admin always has full access and is not configurable here.
+const PERM_DEFAULTS = {
+  workspace_admin: {
+    tabs:    { dashboard:true,  matrix:true,  calendar:true,  log:true,  settings:true  },
+    actions: { addAgent:true,  editAgent:true,  deleteAgent:true,
+               addStaff:true,  editStaff:true,  deleteStaff:true,
+               editTraining:true,
+               addMetrics:true,  editMetrics:true,  deleteMetrics:true,
+               addModule:true,  editModule:true,  deleteModule:true,
+               addTask:true,  editTask:true,  deleteTask:true,
+               editThresholds:true,  editPassScore:true,
+               addCalEvent:true,  editCalEvent:true,  deleteCalEvent:true,
+               clearLog:true }
+  },
+  team_leader: {
+    tabs:    { dashboard:true,  matrix:true,  calendar:true,  log:true,  settings:false },
+    actions: { addAgent:false,  editAgent:true,   deleteAgent:false,
+               addStaff:false,  editStaff:false,  deleteStaff:false,
+               editTraining:true,
+               addMetrics:true,  editMetrics:true,  deleteMetrics:false,
+               addModule:false,  editModule:false,  deleteModule:false,
+               addTask:false,  editTask:false,  deleteTask:false,
+               editThresholds:false,  editPassScore:false,
+               addCalEvent:true,  editCalEvent:true,  deleteCalEvent:false,
+               clearLog:false }
+  },
+  agent: {
+    tabs:    { dashboard:true,  matrix:true,  calendar:false, log:false, settings:false },
+    actions: { addAgent:false,  editAgent:false,  deleteAgent:false,
+               addStaff:false,  editStaff:false,  deleteStaff:false,
+               editTraining:false,
+               addMetrics:false,  editMetrics:false,  deleteMetrics:false,
+               addModule:false,  editModule:false,  deleteModule:false,
+               addTask:false,  editTask:false,  deleteTask:false,
+               editThresholds:false,  editPassScore:false,
+               addCalEvent:false,  editCalEvent:false,  deleteCalEvent:false,
+               clearLog:false }
+  }
+};
 
 function GlobalStyles() {
   useEffect(() => {
@@ -337,17 +384,19 @@ const ISS = { ...IS, padding:"6px 10px", fontSize:"12px" };
 // ══════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════════════
-export default function SkillsMatrix() {
-  const [modules,    setModules]    = useState(SEED_MODULES);
-  const [tasks,      setTasks]      = useState(SEED_TASKS);
-  const [agents,     setAgents]     = useState(SEED_AGENTS);
-  const [staff,      setStaff]      = useState(SEED_STAFF);
-  const [records,    setRecords]    = useState(INIT_RECORDS);
-  const [monthly,    setMonthly]    = useState(INIT_MONTHLY);
-  const [thresholds, setThresholds] = useState(SEED_THRESHOLDS);
-  const [passScore,  setPassScore]  = useState(80);
-  const [shadowing,  setShadowing]  = useState(SEED_SHADOWING);
-  const [auditLog,   setAuditLog]   = useState([]);
+export function SkillsMatrix({ workspaceId, userRole, userEmail, onLogout }) {
+  const [modules,     setModules]     = useState([]);
+  const [tasks,       setTasks]       = useState([]);
+  const [agents,      setAgents]      = useState([]);
+  const [staff,       setStaff]       = useState([]);
+  const [records,     setRecords]     = useState({});
+  const [monthly,     setMonthly]     = useState({});
+  const [thresholds,  setThresholds]  = useState(SEED_THRESHOLDS);
+  const [passScore,   setPassScore]   = useState(80);
+  const [shadowing,   setShadowing]   = useState({});
+  const [auditLog,    setAuditLog]    = useState([]);
+  const [permissions, setPermissions] = useState(PERM_DEFAULTS);
+  const [appReady,    setAppReady]    = useState(false);
 
   const allTasks = useMemo(() => buildAllTasks(modules, tasks), [modules, tasks]);
 
@@ -395,7 +444,7 @@ export default function SkillsMatrix() {
   const [cellShadowEdit, setCellShadowEdit] = useState(null);
 
   // ── CALENDAR state ────────────────────────────────────────────────────
-  const [calEvents,    setCalEvents]    = useState(SEED_CAL);
+  const [calEvents,    setCalEvents]    = useState([]);
   const [calYear,      setCalYear]      = useState(new Date().getFullYear());
   const [calMonth,     setCalMonth]     = useState(new Date().getMonth()); // 0-based
   const [calEventModal,setCalEventModal]= useState(null); // null | "add" | eventId
@@ -404,41 +453,45 @@ export default function SkillsMatrix() {
 
 // ── SUPABASE LOAD ────────────────────────────────────────────────────────
 useEffect(() => {
-  supabase.from('app_state').select('data').eq('id','main').single()
+  if (!workspaceId) return;
+  supabase.from('app_state').select('data').eq('workspace_id', workspaceId).eq('id','main').single()
     .then(({ data: row }) => {
-      if (!row?.data || Object.keys(row.data).length === 0) return
-      const s = row.data
-      if (s.agents)     setAgents(s.agents)
-      if (s.staff)      setStaff(s.staff)
-      if (s.records)    setRecords(s.records)
-      if (s.monthly)    setMonthly(s.monthly)
-      if (s.modules)    setModules(s.modules)
-      if (s.tasks)      setTasks(s.tasks)
-      if (s.thresholds) setThresholds(s.thresholds)
-      if (s.shadowing)  setShadowing(s.shadowing)
-      if (s.calEvents)  setCalEvents(s.calEvents)
-      if (s.passScore)  setPassScore(s.passScore)
-      if (s.auditLog)   setAuditLog(s.auditLog)
-    })
-}, [])
+      if (row?.data && Object.keys(row.data).length > 0) {
+        const s = row.data;
+        if (s.agents)      setAgents(s.agents);
+        if (s.staff)       setStaff(s.staff);
+        if (s.records)     setRecords(s.records);
+        if (s.monthly)     setMonthly(s.monthly);
+        if (s.modules)     setModules(s.modules);
+        if (s.tasks)       setTasks(s.tasks);
+        if (s.thresholds)  setThresholds(s.thresholds);
+        if (s.shadowing)   setShadowing(s.shadowing);
+        if (s.calEvents)   setCalEvents(s.calEvents);
+        if (s.passScore)   setPassScore(s.passScore);
+        if (s.auditLog)    setAuditLog(s.auditLog);
+        if (s.permissions) setPermissions(s.permissions);
+      }
+      setAppReady(true);
+    });
+}, [workspaceId])
 
-// ── SUPABASE SAVE ────────────────────────────────────────────────────────
+// ── SUPABASE SAVE (debounced 1.5s) ───────────────────────────────────────
 useEffect(() => {
+  if (!appReady || !workspaceId) return;
   const timer = setTimeout(() => {
     supabase.from('app_state').update({
       data: { agents, staff, records, monthly, modules, tasks,
-               thresholds, shadowing, calEvents, passScore, auditLog },
+               thresholds, shadowing, calEvents, passScore, auditLog, permissions },
       updated_at: new Date().toISOString()
-    }).eq('id','main').then()
-  }, 1500)
-  return () => clearTimeout(timer)
+    }).eq('workspace_id', workspaceId).eq('id','main').then();
+  }, 1500);
+  return () => clearTimeout(timer);
 }, [agents, staff, records, monthly, modules, tasks,
-    thresholds, shadowing, calEvents, passScore, auditLog])
+    thresholds, shadowing, calEvents, passScore, auditLog, permissions, appReady, workspaceId])
 
   // ── UI helpers ────────────────────────────────────────────────────────
   const [showFormErr,    setShowFormErr]    = useState(false);
   const [clearLogConfirm,setClearLogConfirm]= useState(false);
-  const [resetConfirm,   setResetConfirm]   = useState(false);
 
   const fAgents = useMemo(()=>filterRole==="all"?agents:agents.filter(a=>a.role===filterRole),[filterRole,agents]);
   const selAgt  = agents.find(a=>a.id===selId);
@@ -464,22 +517,11 @@ useEffect(() => {
       if (modModal)       { setModModal(null);      return; }
       if (taskModal)      { setTaskModal(null);     return; }
       if (clearLogConfirm){ setClearLogConfirm(false); return; }
-      if (resetConfirm)   { setResetConfirm(false);    return; }
       setAgentDel(null); setStaffDel(null); setModDel(null); setTaskDel(null); setCalDelId(null);
     };
     document.addEventListener("keydown", fn);
     return () => document.removeEventListener("keydown", fn);
-  }, [calEventModal, staffModal, shadowModal, editModal, mModal, agentModal, modModal, taskModal, clearLogConfirm, resetConfirm]);
-
-  // ── RESET ALL DATA ────────────────────────────────────────────────────
-  const resetAllData = () => {
-    setAgents([]); setStaff([]);
-    setRecords({}); setMonthly({}); setShadowing({}); setCalEvents([]);
-    setModules(SEED_MODULES); setTasks(SEED_TASKS);
-    setThresholds(SEED_THRESHOLDS); setPassScore(80);
-    setAuditLog([{ id:uid(), ts:new Date().toISOString(), category:"agent", action:"App data reset", detail:"All agents, staff, records, shadowing and calendar events cleared. Module/task structure retained." }]);
-    setResetConfirm(false);
-  };
+  }, [calEventModal, staffModal, shadowModal, editModal, mModal, agentModal, modModal, taskModal, clearLogConfirm]);
 
   // ── STAFF CRUD ────────────────────────────────────────────────────────
   const openAddStaff  = () => { setStaffForm({name:"",email:"",title:ADMIN_ROLES[0],directReports:[]}); setStaffModal("add"); setShowFormErr(false); };
@@ -817,9 +859,59 @@ useEffect(() => {
     return l;
   },[auditLog,logFilter,logSearch]);
 
+  // ── PERMISSION HELPERS ────────────────────────────────────────────────
+  // can('addAgent') → true/false based on this user's role and workspace permissions
+  const can = useCallback((action) => {
+    if (userRole === 'super_admin') return true;
+    const rp = permissions[userRole] || PERM_DEFAULTS[userRole] || {};
+    return rp.actions?.[action] ?? false;
+  }, [userRole, permissions]);
+
+  // canTab('settings') → true/false
+  const canTab = useCallback((tab) => {
+    if (userRole === 'super_admin') return true;
+    const rp = permissions[userRole] || PERM_DEFAULTS[userRole] || {};
+    return rp.tabs?.[tab] ?? false;
+  }, [userRole, permissions]);
+
+  // canAdmin — shorthand for whether this user can access admin-level settings
+  const canAdmin = userRole === 'super_admin' || userRole === 'workspace_admin';
+
+  // ── PERMISSIONS CRUD ──────────────────────────────────────────────────
+  const togglePerm = (role, type, key) => {
+    setPermissions(prev => ({
+      ...prev,
+      [role]: {
+        ...prev[role],
+        [type]: {
+          ...(prev[role]?.[type] || PERM_DEFAULTS[role][type]),
+          [key]: !(prev[role]?.[type]?.[key] ?? PERM_DEFAULTS[role][type][key])
+        }
+      }
+    }));
+  };
+
+  const resetPermsToDefault = () => {
+    setPermissions(PERM_DEFAULTS);
+    addLog("threshold", "Reset permissions", "All workspace permissions reset to defaults");
+  };
+
   // ══════════════════════════════════════════════════════════════════════
   // RENDER
   // ══════════════════════════════════════════════════════════════════════
+
+  // Hold until Supabase data is ready — prevents seed data flash
+  if (!appReady) {
+    return (
+      <div style={{backgroundColor:"#080d1a",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"16px"}}>
+        <GlobalStyles/>
+        <div style={{width:"32px",height:"32px",border:"3px solid #1e2d4d",borderTopColor:"#0ea5e9",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <div style={{color:"#475569",fontSize:"13px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Loading workspace data…</div>
+      </div>
+    );
+  }
+
   return(
     <div style={{backgroundColor:"#080d1a",minHeight:"100vh",color:"#e2e8f0",fontFamily:"'IBM Plex Sans',sans-serif"}}>
       <GlobalStyles/>
@@ -829,15 +921,20 @@ useEffect(() => {
         <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
           <div style={{width:"26px",height:"26px",background:"linear-gradient(135deg,#0ea5e9,#8b5cf6)",borderRadius:"6px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px"}}>⚡</div>
           <span style={{fontWeight:700,fontSize:"14px",letterSpacing:"-0.01em"}}>Operations Skills Matrix</span>
-          <span style={{fontSize:"10px",color:"#2a3a52",fontFamily:"'IBM Plex Mono',monospace"}}>Rhino Entertainment Group</span>
         </div>
         <nav style={{display:"flex",gap:"2px",alignItems:"center"}}>
-          {[{id:"dashboard",label:"Dashboard"},{id:"matrix",label:"Skills Matrix"},{id:"calendar",label:"📆 Calendar"},{id:"log",label:"Activity Log"},{id:"settings",label:"⚙ Settings"}].map(v=>(
+          {[{id:"dashboard",label:"Dashboard"},{id:"matrix",label:"Skills Matrix"},{id:"calendar",label:"📆 Calendar"},{id:"log",label:"Activity Log"},{id:"settings",label:"⚙ Settings"}].filter(v=>canTab(v.id)).map(v=>(
             <button key={v.id} className="nbtn" onClick={()=>setView(v.id)} style={{padding:"5px 14px",borderRadius:"6px",border:"none",cursor:"pointer",fontSize:"12px",fontWeight:500,backgroundColor:view===v.id?"#1e3a5f":"transparent",color:view===v.id?"#7dd3fc":"#64748b",transition:"all 0.15s",fontFamily:"'IBM Plex Sans',sans-serif",position:"relative"}}>
               {v.label}
               {v.id==="log"&&auditLog.length>0&&<span style={{position:"absolute",top:"-2px",right:"-2px",width:"7px",height:"7px",borderRadius:"50%",backgroundColor:"#0ea5e9",border:"2px solid #0a1120"}}/>}
             </button>
           ))}
+          <div style={{width:"1px",height:"20px",backgroundColor:"#1a2b42",margin:"0 6px"}}/>
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <div style={{fontSize:"11px",color:"#475569",maxWidth:"160px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{userEmail}</div>
+            <span style={{fontSize:"9px",padding:"2px 6px",borderRadius:"4px",backgroundColor:userRole==='super_admin'?"#7c3aed22":userRole==='workspace_admin'?"#0ea5e922":"#1a2b42",color:userRole==='super_admin'?"#a78bfa":userRole==='workspace_admin'?"#38bdf8":"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>{userRole?.replace(/_/g,' ')}</span>
+            <button onClick={onLogout} className="nbtn" style={{padding:"4px 10px",borderRadius:"5px",border:"1px solid #1a2b42",backgroundColor:"transparent",color:"#475569",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Sign out</button>
+          </div>
         </nav>
       </header>
 
@@ -882,7 +979,7 @@ useEffect(() => {
                         </div>
                       )}
                     </div>
-                    <button onClick={e=>openMonthly(agent.id,e)} style={{marginTop:"8px",width:"100%",backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"5px",fontSize:"10px",cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",letterSpacing:"0.04em"}}>📅 EDIT MONTHLY METRICS</button>
+                    {can('addMetrics')&&<button onClick={e=>openMonthly(agent.id,e)} style={{marginTop:"8px",width:"100%",backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"5px",fontSize:"10px",cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",letterSpacing:"0.04em"}}>📅 EDIT MONTHLY METRICS</button>}
                     <button onClick={e=>openShadow(agent.id,e)} style={{marginTop:"4px",width:"100%",backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#38bdf8",padding:"5px",fontSize:"10px",cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",letterSpacing:"0.04em"}}>👁 SHADOWING {(shadowing[agent.id]||[]).length>0?`(${(shadowing[agent.id]||[]).filter(s=>s.completed).length}/${(shadowing[agent.id]||[]).length})`:""}</button>
                   </div>
                 );
@@ -941,7 +1038,7 @@ useEffect(() => {
                           // shadowing: any completed session for this agent that includes this task
                           const hasShadow = (shadowing[agent.id]||[]).some(s=>s.completed && (s.taskIds||[]).includes(task.id));
                           return(
-                            <td key={task.id} className="mcell" onClick={e=>openEdit(agent.id,task.id,e)} title={`${agent.name} — ${task.label}\n${st}${rec.assessmentScore!=null?`\nScore: ${rec.assessmentScore}%`:""}${rec.trainingDate?`\nDate: ${rec.trainingDate}`:""}${rec.signOff?`\nSigned: ${rec.signOff}`:""}${hasShadow?"\n👁 Shadowing completed":""}`} style={{width:"42px",minWidth:"42px",maxWidth:"42px",height:"38px",borderRight:last?"2px solid #1a2b42":"1px solid #0f1523",padding:"3px",cursor:"pointer"}}>
+                            <td key={task.id} className="mcell" onClick={e=>can('editTraining')&&openEdit(agent.id,task.id,e)} title={`${agent.name} — ${task.label}\n${st}${rec.assessmentScore!=null?`\nScore: ${rec.assessmentScore}%`:""}${rec.trainingDate?`\nDate: ${rec.trainingDate}`:""}${rec.signOff?`\nSigned: ${rec.signOff}`:""}${hasShadow?"\n👁 Shadowing completed":""}`} style={{width:"42px",minWidth:"42px",maxWidth:"42px",height:"38px",borderRight:last?"2px solid #1a2b42":"1px solid #0f1523",padding:"3px",cursor:can('editTraining')?"pointer":"default"}}>
                               <div style={{height:"100%",borderRadius:"4px",backgroundColor:SC[st],display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",color:st==="none"?"#243247":"#fff",fontWeight:700,transition:"filter 0.1s",position:"relative"}}>
                                 {SI[st]}
                                 {hasShadow&&<div style={{position:"absolute",bottom:"1px",right:"1px",width:"6px",height:"6px",borderRadius:"50%",backgroundColor:"#22d3ee",border:"1.5px solid #080d1a",flexShrink:0}}/>}
@@ -950,7 +1047,7 @@ useEffect(() => {
                           );
                         })}
                         <td style={{borderLeft:"2px solid #1e2d4d",padding:"5px 6px"}}>
-                          <div onClick={e=>openMonthly(agent.id,e)} style={{backgroundColor:"#0a1120",border:"1px solid #1e2d4d",borderRadius:"6px",padding:"5px 7px",cursor:"pointer",minWidth:"96px"}}>
+                          <div onClick={e=>can('addMetrics')&&openMonthly(agent.id,e)} style={{backgroundColor:"#0a1120",border:"1px solid #1e2d4d",borderRadius:"6px",padding:"5px 7px",cursor:can('addMetrics')?"pointer":"default",minWidth:"96px"}}>
                             {tc.insuf?<div style={{fontSize:"9px",color:"#475569",textAlign:"center"}}>📋 {tc.avg.count}/{thr.periodMonths||"∞"}mo</div>:(
                               <>{!thr.noProd&&<div style={{fontSize:"9px",color:tc.prodMet?"#22c55e":"#f87171",fontFamily:"'IBM Plex Mono',monospace",marginBottom:"2px"}}>P {tc.avg.prod}%<span style={{color:"#334155",fontSize:"8px"}}> /{tc.prodReq}%</span></div>}<div style={{fontSize:"9px",color:tc.qaMet?"#22c55e":"#f87171",fontFamily:"'IBM Plex Mono',monospace"}}>Q {tc.avg.qa}%<span style={{color:"#334155",fontSize:"8px"}}> /{thr.qaAbsolute}%</span></div></>
                             )}
@@ -1016,7 +1113,7 @@ useEffect(() => {
                   <h1 style={{fontSize:"20px",fontWeight:700,marginBottom:"3px"}}>Training Calendar</h1>
                   <p style={{color:"#475569",fontSize:"13px"}}>Schedule training and shadowing sessions · syncs to Google Calendar</p>
                 </div>
-                <button onClick={()=>openAddCal()} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",padding:"9px 20px",cursor:"pointer",fontSize:"13px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",gap:"7px"}}>＋ Schedule Session</button>
+                {can('addCalEvent')&&<button onClick={()=>openAddCal()} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",padding:"9px 20px",cursor:"pointer",fontSize:"13px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",display:"flex",alignItems:"center",gap:"7px"}}>＋ Schedule Session</button>}
               </div>
 
               {/* Upcoming strip */}
@@ -1029,7 +1126,7 @@ useEffect(() => {
                       const evAgents=(ev.agentIds||[]).map(id=>agents.find(a=>a.id===id)?.name.split(" ")[0]).filter(Boolean);
                       const daysAway=Math.round((new Date(ev.date)-new Date(todayISO))/(864e5));
                       return(
-                        <div key={ev.id} onClick={()=>openEditCal(ev.id)} style={{flexShrink:0,backgroundColor:"#080d1a",border:`1px solid ${c}33`,borderLeft:`3px solid ${c}`,borderRadius:"8px",padding:"10px 14px",cursor:"pointer",minWidth:"180px",maxWidth:"220px"}}>
+                        <div key={ev.id} onClick={()=>can('editCalEvent')&&openEditCal(ev.id)} style={{flexShrink:0,backgroundColor:"#080d1a",border:`1px solid ${c}33`,borderLeft:`3px solid ${c}`,borderRadius:"8px",padding:"10px 14px",cursor:can('editCalEvent')?"pointer":"default",minWidth:"180px",maxWidth:"220px"}}>
                           <div style={{fontSize:"10px",color:c,fontWeight:700,marginBottom:"3px",textTransform:"uppercase",letterSpacing:"0.04em"}}>{TYPE_L[ev.type]} · {daysAway===0?"Today":daysAway===1?"Tomorrow":"in "+daysAway+"d"}</div>
                           <div style={{fontSize:"12px",fontWeight:600,color:"#e2e8f0",marginBottom:"4px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ev.title}</div>
                           <div style={{fontSize:"10px",color:"#475569"}}>📅 {ev.date} · {ev.startTime}–{ev.endTime}</div>
@@ -1082,7 +1179,7 @@ useEffect(() => {
                     const isLastRow=ci>=cells.length-7;
                     const isLastCol=(ci+1)%7===0;
                     return(
-                      <div key={ci} onClick={()=>day&&!isPast&&openAddCal(iso)} style={{minHeight:"110px",borderRight:isLastCol?"none":"1px solid #0f1a2e",borderBottom:isLastRow?"none":"1px solid #0f1a2e",padding:"6px",cursor:day&&!isPast?"pointer":"default",backgroundColor:isToday?"#0a1f30":isPast?"#080c18":"transparent",transition:"background 0.1s"}}
+                      <div key={ci} onClick={()=>day&&!isPast&&can('addCalEvent')&&openAddCal(iso)} style={{minHeight:"110px",borderRight:isLastCol?"none":"1px solid #0f1a2e",borderBottom:isLastRow?"none":"1px solid #0f1a2e",padding:"6px",cursor:day&&!isPast&&can('addCalEvent')?"pointer":"default",backgroundColor:isToday?"#0a1f30":isPast?"#080c18":"transparent",transition:"background 0.1s"}}
                         onMouseEnter={e=>{if(day&&!isPast)e.currentTarget.style.backgroundColor=isToday?"#0c2540":"#0d1527";}}
                         onMouseLeave={e=>{if(day&&!isPast)e.currentTarget.style.backgroundColor=isToday?"#0a1f30":"transparent";}}>
                         {day&&(
@@ -1095,7 +1192,7 @@ useEffect(() => {
                               {dayEvts.slice(0,3).map(ev=>{
                                 const c=TYPE_C[ev.type]||"#a78bfa";
                                 return(
-                                  <div key={ev.id} onClick={e=>{e.stopPropagation();openEditCal(ev.id);}} style={{backgroundColor:c+"22",border:`1px solid ${c}44`,borderLeft:`2px solid ${c}`,borderRadius:"3px",padding:"2px 5px",cursor:"pointer",position:"relative"}} title={ev.title+" · "+ev.startTime}>
+                                  <div key={ev.id} onClick={e=>{e.stopPropagation();can('editCalEvent')&&openEditCal(ev.id);}} style={{backgroundColor:c+"22",border:`1px solid ${c}44`,borderLeft:`2px solid ${c}`,borderRadius:"3px",padding:"2px 5px",cursor:can('editCalEvent')?"pointer":"default",position:"relative"}} title={ev.title+" · "+ev.startTime}>
                                     <div style={{fontSize:"9px",color:c,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",paddingRight:ev.gcalCreated?"10px":"0"}}>{ev.startTime} {ev.title}</div>
                                     {ev.gcalCreated&&<div style={{position:"absolute",top:"2px",right:"3px",width:"5px",height:"5px",borderRadius:"50%",backgroundColor:"#4ade80"}} title="Added to Google Calendar"/>}
                                   </div>
@@ -1146,7 +1243,7 @@ useEffect(() => {
 
               {/* Monthly table */}
               <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",marginBottom:"14px",overflow:"hidden"}}>
-                <SectionHeader title="Monthly Performance Data" subtitle={thr.periodMonths?`Last ${thr.periodMonths} months used for threshold`:"All months averaged"} action={<button onClick={e=>openMonthly(selAgt.id,e)} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"6px 14px",cursor:"pointer",fontSize:"11px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>+ Add / Edit Month</button>}/>
+                <SectionHeader title="Monthly Performance Data" subtitle={thr.periodMonths?`Last ${thr.periodMonths} months used for threshold`:"All months averaged"} action={can('addMetrics')&&<button onClick={e=>openMonthly(selAgt.id,e)} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"6px 14px",cursor:"pointer",fontSize:"11px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>+ Add / Edit Month</button>}/>
                 <div style={{overflowX:"auto"}}>
                   <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px"}}>
                     <thead><tr style={{backgroundColor:"#080d1a"}}>{["Month","Prod %","QA %","In Window","Prod vs Req","QA vs Req",""].map(h=><th key={h} style={{padding:"8px 14px",textAlign:"left",color:"#475569",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",borderBottom:"1px solid #1a2b42",fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
@@ -1162,7 +1259,7 @@ useEffect(() => {
                           <td style={{padding:"9px 14px",fontSize:"11px",color:vals.qa>=thr.qaAbsolute?"#22c55e":"#f87171"}}>{vals.qa>=thr.qaAbsolute?"✓":`✗ ${(thr.qaAbsolute-vals.qa).toFixed(1)}% below`}</td>
                           <td style={{padding:"9px 10px"}}>
                             <button onClick={()=>{setMModal(selAgt.id);startEditM(selAgt.id,ym);}} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"4px",color:"#64748b",padding:"3px 8px",cursor:"pointer",fontSize:"10px",marginRight:"4px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>
-                            <button onClick={()=>deleteM(selAgt.id,ym)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"4px",color:"#ef4444",padding:"3px 8px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>
+                            {can('deleteMetrics')&&<button onClick={()=>deleteM(selAgt.id,ym)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"4px",color:"#ef4444",padding:"3px 8px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>}
                           </td>
                         </tr>);
                       })}
@@ -1251,7 +1348,7 @@ useEffect(() => {
                       {recs.map(({task,rec})=>{
                         const st=!rec.trained?"none":rec.assessmentScore==null?"trained":rec.assessmentScore>=passScore?"passed":"failed";
                         return(
-                          <div key={task.id} className="trow" onClick={e=>openEdit(selAgt.id,task.id,e)} style={{backgroundColor:"#0d1527",padding:"11px 16px",cursor:"pointer",transition:"background-color 0.1s"}}>
+                          <div key={task.id} className="trow" onClick={e=>can('editTraining')&&openEdit(selAgt.id,task.id,e)} style={{backgroundColor:"#0d1527",padding:"11px 16px",cursor:can('editTraining')?"pointer":"default",transition:"background-color 0.1s"}}>
                             <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:"10px"}}>
                               <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:500,color:"#e2e8f0",marginBottom:"5px"}}>{task.label}</div><div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{rec.trained&&rec.trainingDate&&<span style={{fontSize:"10px",color:"#475569"}}>📅 {rec.trainingDate}</span>}{rec.signOff&&<span style={{fontSize:"10px",color:"#475569"}}>✍ {rec.signOff}</span>}{rec.assessmentScore!=null&&<span style={{fontSize:"10px",fontFamily:"'IBM Plex Mono',monospace",color:rec.assessmentScore>=passScore?"#22c55e":"#f87171",fontWeight:600}}>{rec.assessmentScore}%</span>}</div></div>
                               <div style={{width:"26px",height:"26px",flexShrink:0,borderRadius:"6px",backgroundColor:SC[st],display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontWeight:700,color:st==="none"?"#243247":"#fff"}}>{SI[st]}</div>
@@ -1304,7 +1401,7 @@ useEffect(() => {
                   ? `${auditLog.length} total entr${auditLog.length===1?"y":"ies"}`
                   : `${filteredLog.length} of ${auditLog.length} entries`}
               </span>
-              {auditLog.length>0&&<button onClick={()=>setClearLogConfirm(true)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"6px",color:"#ef4444",padding:"5px 12px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Clear all</button>}
+              {auditLog.length>0&&can('clearLog')&&<button onClick={()=>setClearLogConfirm(true)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"6px",color:"#ef4444",padding:"5px 12px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Clear all</button>}
             </div>
 
             {/* Log entries */}
@@ -1352,7 +1449,7 @@ useEffect(() => {
           <div className="fadein">
             <div style={{marginBottom:"22px"}}><h1 style={{fontSize:"20px",fontWeight:700,marginBottom:"3px"}}>Settings & Configuration</h1><p style={{color:"#475569",fontSize:"13px"}}>All changes apply immediately and are recorded in the Activity Log</p></div>
             <div style={{display:"flex",gap:"2px",marginBottom:"20px",backgroundColor:"#0a1120",borderRadius:"10px",padding:"4px",width:"fit-content",border:"1px solid #1a2b42"}}>
-              {[{id:"agents",label:"👥 Agents"},{id:"staff",label:"🏷 Admin Staff"},{id:"tasks",label:"📋 Tasks & Modules"},{id:"thresholds",label:"📊 Thresholds"},{id:"assessment",label:"🎯 Assessment"}].map(t=>(
+              {[{id:"agents",label:"👥 Agents"},{id:"staff",label:"🏷 Admin Staff"},{id:"tasks",label:"📋 Tasks & Modules"},{id:"thresholds",label:"📊 Thresholds"},{id:"assessment",label:"🎯 Assessment"},{id:"permissions",label:"🔐 Permissions"}].map(t=>(
                 <button key={t.id} className={settTab===t.id?"stab-active":""} onClick={()=>setSettTab(t.id)} style={{padding:"7px 18px",borderRadius:"7px",border:"1px solid transparent",cursor:"pointer",fontSize:"12px",fontWeight:500,backgroundColor:"transparent",color:"#64748b",transition:"all 0.15s",fontFamily:"'IBM Plex Sans',sans-serif",whiteSpace:"nowrap"}}>{t.label}</button>
               ))}
             </div>
@@ -1360,7 +1457,7 @@ useEffect(() => {
             {/* ── AGENTS TAB ── */}
             {settTab==="agents"&&(
               <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",overflow:"hidden"}}>
-                <SectionHeader title="Agent Roster" subtitle={`${agents.length} agents · names and emails apply everywhere`} action={<button onClick={openAddAgent} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Agent</button>}/>
+                <SectionHeader title="Agent Roster" subtitle={`${agents.length} agents · names and emails apply everywhere`} action={can('addAgent')&&<button onClick={openAddAgent} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Agent</button>}/>
                 <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px"}}>
                   <thead><tr style={{backgroundColor:"#080d1a"}}>{["Name & Email","Role","Reports To","Start Date","Training",""].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:"#475569",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",borderBottom:"1px solid #1a2b42",fontWeight:600,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
                   <tbody>
@@ -1381,8 +1478,8 @@ useEffect(() => {
                           <td style={{padding:"12px 16px"}}><div style={{display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:"80px"}}><PBar value={trained} max={total} color={role.color} h={4}/></div><span style={{fontSize:"10px",color:"#475569",fontFamily:"'IBM Plex Mono',monospace"}}>{trained}/{total}</span></div></td>
                           <td style={{padding:"12px 16px"}}><div style={{display:"flex",gap:"6px"}}>
                             <button onClick={()=>{setSelId(agent.id);setView("agent");}} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"5px",color:"#64748b",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>View</button>
-                            <button onClick={()=>openEditAgent(agent.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>
-                            <button onClick={()=>setAgentDel(agent.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Remove</button>
+                            {can('editAgent')&&<button onClick={()=>openEditAgent(agent.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}
+                            {can('deleteAgent')&&<button onClick={()=>setAgentDel(agent.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Remove</button>}
                           </div></td>
                         </tr>
                       );
@@ -1399,7 +1496,7 @@ useEffect(() => {
                   <SectionHeader
                     title="Admin & Management Staff"
                     subtitle={`${staff.length} staff members · not included in Skills Matrix · available as trainers and shadowing agents`}
-                    action={<button onClick={openAddStaff} style={{backgroundColor:ADMIN_COLOR,border:"none",borderRadius:"6px",color:"#000",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Staff Member</button>}
+                    action={can('addStaff')&&<button onClick={openAddStaff} style={{backgroundColor:ADMIN_COLOR,border:"none",borderRadius:"6px",color:"#000",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Staff Member</button>}
                   />
                   {/* Role type legend */}
                   <div style={{padding:"10px 18px",borderBottom:"1px solid #1a2b42",display:"flex",gap:"8px",flexWrap:"wrap"}}>
@@ -1440,8 +1537,8 @@ useEffect(() => {
                             </td>
                             <td style={{padding:"12px 16px"}}>
                               <div style={{display:"flex",gap:"6px"}}>
-                                <button onClick={()=>openEditStaff(s.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>
-                                <button onClick={()=>setStaffDel(s.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Remove</button>
+                                {can('editStaff')&&<button onClick={()=>openEditStaff(s.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}
+                                {can('deleteStaff')&&<button onClick={()=>setStaffDel(s.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Remove</button>}
                               </div>
                             </td>
                           </tr>
@@ -1468,7 +1565,7 @@ useEffect(() => {
             {settTab==="tasks"&&(
               <div>
                 <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",overflow:"hidden",marginBottom:"16px"}}>
-                  <SectionHeader title="Training Modules" subtitle={`${modules.length} modules · each module belongs to a role and groups related tasks`} action={<button onClick={openAddModule} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Module</button>}/>
+                  <SectionHeader title="Training Modules" subtitle={`${modules.length} modules · each module belongs to a role and groups related tasks`} action={can('addModule')&&<button onClick={openAddModule} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add Module</button>}/>
                   <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px"}}>
                     <thead><tr style={{backgroundColor:"#080d1a"}}>{["Module","Colour","Required For Role","Tasks",""].map(h=><th key={h} style={{padding:"10px 16px",textAlign:"left",color:"#475569",fontSize:"10px",textTransform:"uppercase",letterSpacing:"0.06em",borderBottom:"1px solid #1a2b42",fontWeight:600}}>{h}</th>)}</tr></thead>
                     <tbody>
@@ -1481,8 +1578,8 @@ useEffect(() => {
                             <td style={{padding:"13px 16px"}}><Badge role={roleInfo}/></td>
                             <td style={{padding:"13px 16px",fontFamily:"'IBM Plex Mono',monospace",color:"#64748b"}}>{tasks.filter(t=>t.moduleId===mod.id).length} tasks</td>
                             <td style={{padding:"13px 16px"}}><div style={{display:"flex",gap:"6px"}}>
-                              <button onClick={()=>openEditModule(mod.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>
-                              <button onClick={()=>setModDel(mod.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Delete</button>
+                              {can('editModule')&&<button onClick={()=>openEditModule(mod.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}
+                              {can('deleteModule')&&<button onClick={()=>setModDel(mod.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"4px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Delete</button>}
                             </div></td>
                           </tr>
                         );
@@ -1495,7 +1592,7 @@ useEffect(() => {
                   <SectionHeader title="Tasks" subtitle={`${tasks.length} tasks across ${modules.length} modules — module determines role tier`}
                     action={<div style={{display:"flex",gap:"8px",alignItems:"center"}}>
                       <select value={taskModuleFilter} onChange={e=>setTaskModuleFilter(e.target.value)} style={{...ISS,width:"auto",minWidth:"160px"}}><option value="all">All Modules</option>{[...modules].sort((a,b)=>(a.order||0)-(b.order||0)).map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select>
-                      <button onClick={()=>openAddTask(taskModuleFilter!=="all"?taskModuleFilter:modules[0]?.id)} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",whiteSpace:"nowrap"}}>＋ Add Task</button>
+                      {can('addTask')&&<button onClick={()=>openAddTask(taskModuleFilter!=="all"?taskModuleFilter:modules[0]?.id)} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"7px 16px",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",whiteSpace:"nowrap"}}>＋ Add Task</button>}
                     </div>}
                   />
                   {[...modules].sort((a,b)=>(a.order||0)-(b.order||0)).filter(mod=>taskModuleFilter==="all"||mod.id===taskModuleFilter).map(mod=>{
@@ -1505,7 +1602,7 @@ useEffect(() => {
                       <div key={mod.id}>
                         <div style={{padding:"10px 16px",backgroundColor:mod.color+"0d",borderTop:"1px solid #1a2b42",borderBottom:"1px solid #1a2b42",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                           <div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",backgroundColor:mod.color}}/><span style={{fontWeight:700,color:mod.color,fontSize:"12px"}}>{mod.label}</span><Badge role={roleInfo}/><span style={{fontSize:"10px",color:"#334155"}}>{modTasks.length} tasks</span></div>
-                          <button onClick={()=>openAddTask(mod.id)} style={{backgroundColor:"transparent",border:`1px solid ${mod.color}44`,borderRadius:"5px",color:mod.color,padding:"3px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add task here</button>
+                          {can('addTask')&&<button onClick={()=>openAddTask(mod.id)} style={{backgroundColor:"transparent",border:`1px solid ${mod.color}44`,borderRadius:"5px",color:mod.color,padding:"3px 10px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>＋ Add task here</button>}
                         </div>
                         {modTasks.length===0&&<div style={{padding:"14px 20px",color:"#334155",fontSize:"12px",fontStyle:"italic"}}>No tasks yet.</div>}
                         {modTasks.map((task,ti)=>(
@@ -1516,8 +1613,8 @@ useEffect(() => {
                               {[...modules].sort((a,b)=>(a.order||0)-(b.order||0)).map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
                             </select>
                             <div style={{display:"flex",gap:"5px"}}>
-                              <button onClick={()=>openEditTask(task.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"3px 9px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>
-                              <button onClick={()=>setTaskDel(task.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"3px 9px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>
+                              {can('editTask')&&<button onClick={()=>openEditTask(task.id)} style={{backgroundColor:"transparent",border:"1px solid #1e3a5f",borderRadius:"5px",color:"#60a5fa",padding:"3px 9px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}
+                              {can('deleteTask')&&<button onClick={()=>setTaskDel(task.id)} style={{backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"5px",color:"#ef4444",padding:"3px 9px",cursor:"pointer",fontSize:"10px",fontFamily:"'IBM Plex Sans',sans-serif"}}>✕</button>}
                             </div>
                           </div>
                         ))}
@@ -1545,7 +1642,7 @@ useEffect(() => {
                             <td style={{padding:"13px 16px"}}>{isE?<div style={{display:"flex",alignItems:"center",gap:"6px"}}><input type="number" min="0" max="100" value={sForm.qaAbsolute??""} onChange={e=>setSForm(f=>({...f,qaAbsolute:e.target.value}))} style={{...ISS,width:"70px"}}/><span style={{fontSize:"10px",color:"#475569"}}>%</span></div>:<span style={{fontFamily:"'IBM Plex Mono',monospace",color:ro.color}}>≥ {t.qaAbsolute}%</span>}</td>
                             <td style={{padding:"13px 16px"}}>{isE?<div style={{display:"flex",alignItems:"center",gap:"6px"}}><input type="number" min="1" max="24" disabled={sForm.noProd} value={sForm.periodMonths??""} onChange={e=>setSForm(f=>({...f,periodMonths:e.target.value}))} style={{...ISS,width:"70px",opacity:sForm.noProd?0.3:1}}/><span style={{fontSize:"10px",color:"#475569"}}>months</span></div>:<span style={{fontFamily:"'IBM Plex Mono',monospace",color:"#94a3b8"}}>{t.periodMonths!=null?`${t.periodMonths} months`:<span style={{color:"#334155"}}>N/A</span>}</span>}</td>
                             <td style={{padding:"13px 16px"}}>{isE?<label style={{display:"flex",alignItems:"center",gap:"8px",cursor:"pointer"}}><input type="checkbox" checked={!!sForm.noProd} onChange={e=>setSForm(f=>({...f,noProd:e.target.checked}))} style={{width:"14px",height:"14px",accentColor:"#0ea5e9"}}/><span style={{fontSize:"12px",color:"#94a3b8"}}>QA only</span></label>:<span style={{fontSize:"11px",color:t.noProd?"#22c55e":"#334155"}}>{t.noProd?"✓ QA only":"No"}</span>}</td>
-                            <td style={{padding:"13px 16px"}}>{isE?<div style={{display:"flex",gap:"6px"}}><button onClick={saveS} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"6px 14px",cursor:"pointer",fontSize:"11px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>Save</button><button onClick={()=>setSRow(null)} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"6px 10px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button></div>:<button onClick={()=>startEditS(ro.id)} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"5px 12px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}</td>
+                            <td style={{padding:"13px 16px"}}>{isE?<div style={{display:"flex",gap:"6px"}}><button onClick={saveS} style={{backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",padding:"6px 14px",cursor:"pointer",fontSize:"11px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif"}}>Save</button><button onClick={()=>setSRow(null)} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"6px 10px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button></div>:can('editThresholds')&&<button onClick={()=>startEditS(ro.id)} style={{backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",padding:"5px 12px",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Edit</button>}</td>
                           </tr>
                         );
                       })}
@@ -1569,26 +1666,17 @@ useEffect(() => {
                   <div style={{padding:"24px"}}>
                     <div style={{display:"flex",alignItems:"center",gap:"24px",marginBottom:"20px"}}>
                       <div><div style={{fontSize:"11px",color:"#475569",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:"8px"}}>Current Pass Score</div><div style={{fontSize:"48px",fontWeight:700,fontFamily:"'IBM Plex Mono',monospace",color:"#a78bfa",lineHeight:1}}>{passScore}%</div></div>
-                      <div style={{flex:1,maxWidth:"320px"}}>
+                      {can('editPassScore')&&<div style={{flex:1,maxWidth:"320px"}}>
                         <div style={{fontSize:"11px",color:"#475569",marginBottom:"8px",textTransform:"uppercase",letterSpacing:"0.06em"}}>Adjust Score</div>
                         <div style={{display:"flex",alignItems:"center",gap:"10px"}}><input type="range" min="50" max="100" value={passScore} onChange={e=>updatePassScore(Number(e.target.value))} style={{flex:1,accentColor:"#a78bfa",cursor:"pointer"}}/><input type="number" min="50" max="100" value={passScore} onChange={e=>updatePassScore(Number(e.target.value))} style={{...ISS,width:"70px"}}/></div>
                         <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:"#334155",marginTop:"4px"}}><span>50%</span><span>100%</span></div>
-                      </div>
+                      </div>}
                     </div>
                     <div style={{backgroundColor:"#080d1a",borderRadius:"8px",padding:"14px 16px",border:"1px solid #1e2d4d",fontSize:"12px",color:"#64748b",lineHeight:"1.7"}}>
                       <div>Score ≥ <span style={{color:"#a78bfa",fontFamily:"'IBM Plex Mono',monospace"}}>{passScore}%</span> → <span style={{color:"#22c55e"}}>Passed ✓</span></div>
                       <div>Score &lt; <span style={{color:"#a78bfa",fontFamily:"'IBM Plex Mono',monospace"}}>{passScore}%</span> → <span style={{color:"#f87171"}}>Failed ✗</span></div>
                       <div style={{marginTop:"6px",color:"#475569",fontSize:"11px"}}>Applies to all {tasks.length} tasks across all {agents.length} agents.</div>
                     </div>
-                  </div>
-                </div>
-                <div style={{backgroundColor:"#0d1527",border:"1px solid #7f1d1d55",borderRadius:"10px",padding:"18px 20px",marginBottom:"14px"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px",flexWrap:"wrap"}}>
-                    <div>
-                      <div style={{fontWeight:700,fontSize:"13px",marginBottom:"3px",color:"#fca5a5"}}>⚠ Reset All Data</div>
-                      <div style={{fontSize:"11px",color:"#64748b",lineHeight:"1.6"}}>Wipes all agents, staff, training records, shadowing sessions, and calendar events. Module and task structure is kept. Use this before going live to replace seed data.</div>
-                    </div>
-                    <button onClick={()=>setResetConfirm(true)} style={{flexShrink:0,padding:"8px 20px",backgroundColor:"transparent",border:"1px solid #7f1d1d",borderRadius:"6px",color:"#f87171",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",whiteSpace:"nowrap"}}>Reset All Data</button>
                   </div>
                 </div>
                 <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",padding:"18px 20px"}}>
@@ -1600,6 +1688,153 @@ useEffect(() => {
                 </div>
               </div>
             )}
+
+            {/* ── PERMISSIONS TAB ── */}
+            {settTab==="permissions"&&(()=>{
+              const CONFIGURABLE_ROLES = [
+                { id:"workspace_admin", label:"Workspace Admin", color:"#38bdf8" },
+                { id:"team_leader",     label:"Team Leader",     color:"#34d399" },
+                { id:"agent",           label:"Agent",           color:"#94a3b8" },
+              ];
+              const TAB_ROWS = [
+                { key:"dashboard", label:"Dashboard",    icon:"📊" },
+                { key:"matrix",    label:"Skills Matrix", icon:"🗂" },
+                { key:"calendar",  label:"Calendar",     icon:"📆" },
+                { key:"log",       label:"Activity Log", icon:"📋" },
+                { key:"settings",  label:"Settings",     icon:"⚙" },
+              ];
+              const ACTION_GROUPS = [
+                { group:"Agents", rows:[
+                  { key:"addAgent",    label:"Add agent" },
+                  { key:"editAgent",   label:"Edit agent" },
+                  { key:"deleteAgent", label:"Delete agent" },
+                ]},
+                { group:"Staff", rows:[
+                  { key:"addStaff",    label:"Add staff member" },
+                  { key:"editStaff",   label:"Edit staff member" },
+                  { key:"deleteStaff", label:"Delete staff member" },
+                ]},
+                { group:"Training & Metrics", rows:[
+                  { key:"editTraining",   label:"Edit training records" },
+                  { key:"addMetrics",     label:"Add monthly metrics" },
+                  { key:"editMetrics",    label:"Edit monthly metrics" },
+                  { key:"deleteMetrics",  label:"Delete monthly metrics" },
+                ]},
+                { group:"Modules & Tasks", rows:[
+                  { key:"addModule",    label:"Add module" },
+                  { key:"editModule",   label:"Edit module" },
+                  { key:"deleteModule", label:"Delete module" },
+                  { key:"addTask",      label:"Add task" },
+                  { key:"editTask",     label:"Edit task" },
+                  { key:"deleteTask",   label:"Delete task" },
+                ]},
+                { group:"Configuration", rows:[
+                  { key:"editThresholds", label:"Edit thresholds" },
+                  { key:"editPassScore",  label:"Change pass score" },
+                ]},
+                { group:"Calendar", rows:[
+                  { key:"addCalEvent",    label:"Add calendar session" },
+                  { key:"editCalEvent",   label:"Edit calendar session" },
+                  { key:"deleteCalEvent", label:"Delete calendar session" },
+                ]},
+                { group:"Activity Log", rows:[
+                  { key:"clearLog", label:"Clear activity log" },
+                ]},
+              ];
+
+              const Toggle = ({ role, type, k, def }) => {
+                const rp = permissions[role] || PERM_DEFAULTS[role] || {};
+                const val = rp[type]?.[k] ?? def;
+                return (
+                  <button
+                    onClick={() => togglePerm(role, type, k)}
+                    style={{width:"40px",height:"22px",borderRadius:"11px",border:"none",cursor:"pointer",backgroundColor:val?"#0ea5e9":"#1e2d4d",position:"relative",transition:"background 0.2s",flexShrink:0}}
+                  >
+                    <div style={{position:"absolute",top:"3px",left:val?"21px":"3px",width:"16px",height:"16px",borderRadius:"50%",backgroundColor:"#fff",transition:"left 0.2s"}}/>
+                  </button>
+                );
+              };
+
+              const colW = "120px";
+              const thStyle = { padding:"10px 16px", textAlign:"center", fontSize:"11px", fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", borderBottom:"1px solid #1a2b42", whiteSpace:"nowrap" };
+              const tdStyle = { padding:"8px 16px", textAlign:"center", borderBottom:"1px solid #0f1523" };
+
+              return (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"16px"}}>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:"14px",marginBottom:"3px"}}>Role Permissions</div>
+                      <div style={{fontSize:"12px",color:"#475569"}}>Controls what each role can see and do. <span style={{color:"#38bdf8"}}>Super Admin</span> always has full access.</div>
+                    </div>
+                    <button onClick={resetPermsToDefault} style={{padding:"7px 16px",backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"11px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Reset to Defaults</button>
+                  </div>
+
+                  {/* NAV TABS */}
+                  <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",overflow:"hidden",marginBottom:"14px"}}>
+                    <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2b42",fontSize:"11px",fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.07em"}}>Navigation Tabs</div>
+                    <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px"}}>
+                      <thead>
+                        <tr style={{backgroundColor:"#080d1a"}}>
+                          <th style={{...thStyle,textAlign:"left",width:"200px"}}>Tab</th>
+                          {CONFIGURABLE_ROLES.map(r=><th key={r.id} style={{...thStyle,color:r.color,width:colW}}>{r.label}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {TAB_ROWS.map(row=>(
+                          <tr key={row.key} className="hrow" style={{backgroundColor:"transparent"}}>
+                            <td style={{...tdStyle,textAlign:"left",padding:"10px 16px"}}>
+                              <span style={{fontSize:"13px",marginRight:"8px"}}>{row.icon}</span>
+                              <span style={{color:"#e2e8f0",fontWeight:500}}>{row.label}</span>
+                            </td>
+                            {CONFIGURABLE_ROLES.map(r=>(
+                              <td key={r.id} style={tdStyle}>
+                                <div style={{display:"flex",justifyContent:"center"}}>
+                                  <Toggle role={r.id} type="tabs" k={row.key} def={PERM_DEFAULTS[r.id].tabs[row.key]}/>
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* ACTIONS */}
+                  <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"10px",overflow:"hidden"}}>
+                    <div style={{padding:"12px 16px",borderBottom:"1px solid #1a2b42",fontSize:"11px",fontWeight:700,color:"#475569",textTransform:"uppercase",letterSpacing:"0.07em"}}>In-Page Actions</div>
+                    <table style={{borderCollapse:"collapse",width:"100%",fontSize:"12px"}}>
+                      <thead>
+                        <tr style={{backgroundColor:"#080d1a"}}>
+                          <th style={{...thStyle,textAlign:"left",width:"200px"}}>Action</th>
+                          {CONFIGURABLE_ROLES.map(r=><th key={r.id} style={{...thStyle,color:r.color,width:colW}}>{r.label}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ACTION_GROUPS.map(grp=>(
+                          <>
+                            <tr key={"g_"+grp.group} style={{backgroundColor:"#080d1a"}}>
+                              <td colSpan={4} style={{padding:"7px 16px",fontSize:"10px",color:"#334155",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",borderBottom:"1px solid #0f1523"}}>{grp.group}</td>
+                            </tr>
+                            {grp.rows.map(row=>(
+                              <tr key={row.key} className="hrow" style={{backgroundColor:"transparent"}}>
+                                <td style={{...tdStyle,textAlign:"left",padding:"9px 16px",paddingLeft:"22px",color:"#94a3b8"}}>{row.label}</td>
+                                {CONFIGURABLE_ROLES.map(r=>(
+                                  <td key={r.id} style={tdStyle}>
+                                    <div style={{display:"flex",justifyContent:"center"}}>
+                                      <Toggle role={r.id} type="actions" k={row.key} def={PERM_DEFAULTS[r.id].actions[row.key]}/>
+                                    </div>
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </main>
@@ -2183,7 +2418,7 @@ useEffect(() => {
                 <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
                   <button onClick={()=>setCalEventModal(null)} style={{padding:"9px 16px",backgroundColor:"transparent",border:"1px solid #1e2d4d",borderRadius:"6px",color:"#64748b",cursor:"pointer",fontSize:"12px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Cancel</button>
                   <button onClick={saveCalEvent} disabled={!canSave} style={{padding:"9px 20px",backgroundColor:"#0ea5e9",border:"none",borderRadius:"6px",color:"#fff",cursor:"pointer",fontSize:"12px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",opacity:canSave?1:0.4,flex:1}}>{isNew?"Save Session":"Update Session"}</button>
-                  {!isNew&&<button onClick={()=>setCalDelId(calEventModal)} style={{padding:"9px 14px",backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"6px",color:"#ef4444",cursor:"pointer",fontSize:"12px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Delete</button>}
+                  {!isNew&&can('deleteCalEvent')&&<button onClick={()=>setCalDelId(calEventModal)} style={{padding:"9px 14px",backgroundColor:"transparent",border:"1px solid #3d1515",borderRadius:"6px",color:"#ef4444",cursor:"pointer",fontSize:"12px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Delete</button>}
                   {/* Google Calendar button */}
                   <button onClick={()=>{const sid=saveCalEvent();if(sid)setTimeout(()=>openGcal({...calForm,id:sid}),80);}} disabled={!canSave} title="Save and open in Google Calendar with all invites pre-filled" style={{padding:"9px 14px",backgroundColor:"#164e1f",border:"1px solid #4ade8044",borderRadius:"6px",color:"#4ade80",cursor:"pointer",fontSize:"11px",fontWeight:700,fontFamily:"'IBM Plex Sans',sans-serif",opacity:canSave?1:0.4,display:"flex",alignItems:"center",gap:"5px"}}>
                     <span>📆</span> Add to Google Calendar
@@ -2273,7 +2508,111 @@ useEffect(() => {
       {modDel&&<ConfirmModal title="Delete Module?" body={<>Deletes module <strong style={{color:"#e2e8f0"}}>{modules.find(m=>m.id===modDel)?.label}</strong> and all <strong style={{color:"#f87171"}}>{tasks.filter(t=>t.moduleId===modDel).length} tasks</strong> inside it.</>} confirmLabel="Yes, Delete Module" onConfirm={deleteModule} onCancel={()=>setModDel(null)}/>}
       {taskDel&&<ConfirmModal title="Delete Task?" body={<>Deletes <strong style={{color:"#e2e8f0"}}>{tasks.find(t=>t.id===taskDel)?.label}</strong> and removes all training records for this task across all agents.</>} confirmLabel="Yes, Delete Task" onConfirm={deleteTask} onCancel={()=>setTaskDel(null)}/>}
       {clearLogConfirm&&<ConfirmModal title="Clear Activity Log?" body="All log entries will be permanently deleted. This cannot be undone." confirmLabel="Yes, Clear Log" onConfirm={()=>{setAuditLog([]);setClearLogConfirm(false);}} onCancel={()=>setClearLogConfirm(false)}/>}
-      {resetConfirm&&<ConfirmModal title="Reset All Data?" body={<>This will <strong style={{color:"#f87171"}}>permanently delete all agents, staff, training records, monthly metrics, shadowing sessions, and calendar events</strong>. Module and task structure will be kept. This cannot be undone.</>} confirmLabel="Yes, Reset Everything" onConfirm={resetAllData} onCancel={()=>setResetConfirm(false)}/>}
     </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ══════════════════════════════════════════════════════════════════════════
+function LoginScreen() {
+  const [email,    setEmail]    = useState("");
+  const [password, setPassword] = useState("");
+  const [error,    setError]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) return;
+    setLoading(true); setError("");
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { setError(error.message); setLoading(false); }
+  };
+
+  const IS2 = { width:"100%", backgroundColor:"#0d1527", border:"1px solid #1e2d4d", borderRadius:"8px", color:"#e2e8f0", padding:"11px 14px", fontSize:"14px", outline:"none", fontFamily:"'IBM Plex Sans',sans-serif" };
+
+  return (
+    <div style={{backgroundColor:"#080d1a",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <GlobalStyles/>
+      <div style={{width:"380px",maxWidth:"100%"}}>
+        <div style={{textAlign:"center",marginBottom:"36px"}}>
+          <div style={{width:"48px",height:"48px",background:"linear-gradient(135deg,#0ea5e9,#8b5cf6)",borderRadius:"12px",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"22px",margin:"0 auto 14px"}}>⚡</div>
+          <h1 style={{fontSize:"20px",fontWeight:700,marginBottom:"6px",color:"#e2e8f0"}}>Operations Skills Matrix</h1>
+          <p style={{fontSize:"13px",color:"#475569"}}>Sign in to your workspace</p>
+        </div>
+        <div style={{backgroundColor:"#0d1527",border:"1px solid #1a2b42",borderRadius:"12px",padding:"28px"}}>
+          <div style={{marginBottom:"16px"}}>
+            <label style={{display:"block",fontSize:"11px",color:"#64748b",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.06em"}}>Email</label>
+            <input type="email" value={email} onChange={e=>setEmail(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="you@company.com" style={IS2} autoFocus/>
+          </div>
+          <div style={{marginBottom:"22px"}}>
+            <label style={{display:"block",fontSize:"11px",color:"#64748b",marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.06em"}}>Password</label>
+            <input type="password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••" style={IS2}/>
+          </div>
+          {error&&<div style={{backgroundColor:"#7f1d1d22",border:"1px solid #7f1d1d",borderRadius:"6px",padding:"10px 14px",marginBottom:"16px",fontSize:"13px",color:"#f87171"}}>{error}</div>}
+          <button onClick={handleLogin} disabled={loading||!email||!password} style={{width:"100%",padding:"11px",backgroundColor:"#0ea5e9",border:"none",borderRadius:"8px",color:"#fff",fontSize:"14px",fontWeight:700,cursor:"pointer",fontFamily:"'IBM Plex Sans',sans-serif",opacity:(loading||!email||!password)?0.5:1,transition:"opacity 0.15s"}}>
+            {loading?"Signing in…":"Sign in"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppLoadingScreen() {
+  return (
+    <div style={{backgroundColor:"#080d1a",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:"14px"}}>
+      <GlobalStyles/>
+      <div style={{width:"32px",height:"32px",border:"3px solid #1e2d4d",borderTopColor:"#0ea5e9",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{color:"#475569",fontSize:"13px",fontFamily:"'IBM Plex Sans',sans-serif"}}>Checking session…</div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP — AUTH WRAPPER (default export)
+// ══════════════════════════════════════════════════════════════════════════
+export default function App() {
+  const [session,       setSession]       = useState(undefined);
+  const [workspaceUser, setWorkspaceUser] = useState(null);
+  const [authReady,     setAuthReady]     = useState(false);
+
+  const loadWorkspaceUser = useCallback(async (userId) => {
+    const { data: sa } = await supabase.from("super_admins").select("*").eq("user_id", userId).maybeSingle();
+    if (sa) {
+      const { data: ws } = await supabase.from("workspaces").select("id").limit(1).single();
+      setWorkspaceUser({ role:"super_admin", workspace_id:ws?.id });
+      return;
+    }
+    const { data: wu } = await supabase.from("workspace_users").select("*").eq("user_id", userId).maybeSingle();
+    if (wu) setWorkspaceUser(wu);
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) { loadWorkspaceUser(session.user.id).finally(() => setAuthReady(true)); }
+      else { setAuthReady(true); }
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) { loadWorkspaceUser(session.user.id).finally(() => setAuthReady(true)); }
+      else { setWorkspaceUser(null); setAuthReady(true); }
+    });
+    return () => subscription.unsubscribe();
+  }, [loadWorkspaceUser]);
+
+  const handleLogout = async () => { await supabase.auth.signOut(); };
+
+  if (!authReady)               return <AppLoadingScreen />;
+  if (!session||!workspaceUser) return <LoginScreen />;
+
+  return (
+    <SkillsMatrix
+      workspaceId={workspaceUser.workspace_id}
+      userRole={workspaceUser.role}
+      userEmail={session.user.email}
+      onLogout={handleLogout}
+    />
   );
 }
